@@ -3,7 +3,11 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, cpSync 
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
-import { COMPLETION_TAG } from "./completion.ts";
+import {
+  COMPLETION_MARKER,
+  FEEDBACK_MARKER,
+  hasTerminalSignal,
+} from "./completion.ts";
 import { RALPH_COMMANDS, STATE_FILENAME } from "./commands.ts";
 
 // Types
@@ -127,8 +131,9 @@ function clearState(directory: string): void {
   } catch {}
 }
 
-// Check completion by fetching session messages via API
-async function isComplete(client: any, sessionId: string, directory: string): Promise<boolean> {
+// Check whether the latest assistant response intentionally ended the coding
+// turn. Ordinary prose is not terminal: it may be a premature idle.
+async function hasTerminalResponse(client: any, sessionId: string, directory: string): Promise<boolean> {
   try {
     const response = await client.session.messages({
       path: { id: sessionId },
@@ -154,9 +159,7 @@ async function isComplete(client: any, sessionId: string, directory: string): Pr
       .map((p: any) => p.text ?? "")
       .join("\n");
 
-    if (COMPLETION_TAG.test(responseText)) {
-      return true;
-    }
+    return hasTerminalSignal(responseText);
   } catch {
     // Silent fail
   }
@@ -192,7 +195,7 @@ export default async function RalphLoopPlugin(ctx: any) {
     //   TypeError: Object.entries requires that input parameter not be null or undefined
     tool: {
       "ralph-loop": tool({
-        description: "Start Ralph Loop - auto-continues until task completion. Use: /ralph-loop <task description>",
+        description: "Start Ralph Loop - prevents premature idle during a coding turn. Use: /ralph-loop <task description>",
         args: {
           task: tool.schema.string().describe("The task to work on until completion"),
           maxIterations: tool.schema.number().default(100).describe("Maximum iterations (default: 100)"),
@@ -210,7 +213,11 @@ export default async function RalphLoopPlugin(ctx: any) {
 
 Task: ${task}
 
-I will auto-continue until the task is complete. When fully done, I will output \`<promise>DONE</promise>\` to signal completion.
+I will auto-continue while the coding turn ends without a valid workflow signal.
+
+Valid terminal responses:
+- \`${COMPLETION_MARKER}\` when there is no important coding feedback
+- \`${FEEDBACK_MARKER}\` followed by the necessary coding feedback
 
 Use /cancel-ralph to stop early.`;
         }
@@ -245,8 +252,8 @@ Use /cancel-ralph to stop early.`;
 
 1. Start with: /ralph-loop "Build a REST API"
 2. AI works on the task until idle
-3. Plugin auto-continues if not complete
-4. Loop stops when AI outputs: <promise>DONE</promise>
+3. Plugin auto-continues if the response has no workflow terminal signal
+4. Loop stops when the response contains ${COMPLETION_MARKER} or ${FEEDBACK_MARKER}
 
 ## State File
 
@@ -265,7 +272,7 @@ Located at: .opencode/ralph-loop.local.md`;
         if (!sessionId) return;
         if (state.sessionId && state.sessionId !== sessionId) return;
 
-        if (await isComplete(client, sessionId, directory)) {
+        if (await hasTerminalResponse(client, sessionId, directory)) {
           clearState(directory);
           return;
         }
@@ -278,16 +285,21 @@ Located at: .opencode/ralph-loop.local.md`;
         const newState = { ...state, iteration: state.iteration + 1, sessionId };
         writeState(directory, newState);
 
-        // Inject continuation prompt with original task (like Anthropic's ralph-wiggum)
+        // Treat an unmarked idle as premature. Resume actual work instead of
+        // acknowledging the continuation request.
         const continuationPrompt = `[RALPH LOOP - ITERATION ${newState.iteration}/${newState.maxIterations}]
 
-Your previous attempt did not output the completion promise. Continue working on the task.
+当前 coding turn 尚未产生有效的 workflow 终止信号. 立即从当前 session state 继续执行剩余工作.
 
-IMPORTANT:
-- Review your progress so far
-- Continue from where you left off
-- When FULLY complete, output: <promise>DONE</promise>
-- Do not stop until the task is truly done
+不要回复确认信息、计划、进度说明, 也不要解释接下来准备做什么. 直接使用工具执行当前最需要的下一步操作.
+
+只要仍可自行推进, 就继续 implementation、debugging、testing 和 verification, 不要因为阶段性进展而停止.
+
+本轮真正结束时只允许以下两类 terminal response:
+- 没有可能改变任务、任务状态或既有 context 的重要 coding feedback: response 包含 ${COMPLETION_MARKER}.
+- 存在需要交给 workflow 的重要 coding feedback: response 包含 ${FEEDBACK_MARKER}, marker 后只输出必要 feedback, 且不得包含 ${COMPLETION_MARKER}.
+
+除此之外不要结束本轮.
 
 Original task:
 ${state.prompt || "(no task specified)"}`;

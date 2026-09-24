@@ -39,4 +39,4 @@ Use this command when:
 - The loop appears stuck and you want manual control
 - You need to work on something else
 
-Note: Prefer completing tasks properly with `<promise>DONE</promise>` when possible.
+Note: Prefer ending coding turns with the normal workflow terminal signal when possible.

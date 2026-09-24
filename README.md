@@ -3,7 +3,7 @@
 [![CI](https://github.com/charfeng1/opencode-ralph-loop/actions/workflows/release.yml/badge.svg)](https://github.com/charfeng1/opencode-ralph-loop/actions/workflows/release.yml)
 [![npm version](https://img.shields.io/npm/v/opencode-ralph-loop.svg)](https://www.npmjs.com/package/opencode-ralph-loop)
 
-Minimal Ralph Loop plugin for [opencode](https://opencode.ai) - auto-continues until task completion.
+Minimal Ralph Loop plugin for [opencode](https://opencode.ai) - prevents premature idle during coding turns.
 
 Inspired by Anthropic's Ralph Wiggum technique for iterative, self-referential AI development loops.
 
@@ -54,20 +54,27 @@ The AI will work on your task and automatically continue until completion.
 ## How it works
 
 1. `/ralph-loop` creates a state file at `.opencode/ralph-loop.local.md`
-2. When the AI goes idle, the plugin checks if `<promise>DONE</promise>` was output
-3. If not found, it injects "Continue from where you left off"
-4. Loop continues until DONE is found or max iterations (100) reached
+2. When the AI goes idle, the plugin checks the latest assistant response for `👌` or `<<<CODING_FEEDBACK>>>`
+3. If neither is found, it injects a work-first continuation prompt that tells the agent to resume execution instead of acknowledging
+4. Loop continues until a terminal signal is found or max iterations (100) is reached
 5. State file is deleted when complete
 
-### Completion Promise
+### Workflow terminal signals
 
-When the AI finishes a task, it outputs:
+No important coding feedback:
 
 ```
-<promise>DONE</promise>
+👌
 ```
 
-**Important:** The AI should ONLY output this when the task is COMPLETELY and VERIFIABLY finished. False promises are not allowed.
+Important coding feedback:
+
+```
+<<<CODING_FEEDBACK>>>
+<necessary feedback>
+```
+
+Detection uses substring matching to tolerate minor model formatting drift. Any response containing neither marker is treated as a premature idle and continued.
 
 ## State File
 
@@ -98,7 +105,7 @@ Add `.opencode/ralph-loop.local.md` to your `.gitignore`.
 - **Auto-setup**: Skills and commands are automatically installed on first run
 - **Minimal**: ~300 lines, no bloat
 - **Project-relative**: State file in `.opencode/`, not global
-- **Completion detection**: Scans session messages for DONE promise
+- **Terminal detection**: Scans the latest assistant response for workflow markers
 - **Progressive context**: Skills provide context only when needed
 - **Commands**: `/ralph-loop`, `/cancel-ralph`, and `/help`
 

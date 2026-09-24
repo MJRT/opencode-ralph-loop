@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { mkdtempSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -58,5 +58,79 @@ describe("RalphLoopPlugin", () => {
     const output = await cancelRalph.execute();
 
     expect(output).toBe("No active Ralph Loop to cancel.");
+  });
+
+  it.each([
+    ["completion", "Finished. 👌"],
+    ["coding feedback", "Blocked. <<<CODING_FEEDBACK>>>\nNeed external data."],
+  ])("stops on %s marker using includes semantics", async (_name, assistantText) => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const prompt = vi.fn();
+    const client = {
+      session: {
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: { role: "assistant" },
+              parts: [{ type: "text", text: assistantText }],
+            },
+          ],
+        }),
+        prompt,
+      },
+    };
+    const result = await RalphLoopPlugin({ directory, client });
+
+    await (result.tool as any)["ralph-loop"].execute({
+      task: "test task",
+      maxIterations: 5,
+    });
+    await result.event({
+      event: { type: "session.idle", properties: { sessionID: "ses_test" } },
+    });
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(existsSync(join(directory, ".opencode", "ralph-loop.local.md"))).toBe(false);
+  });
+
+  it("continues an unmarked idle with a work-first prompt", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const client = {
+      session: {
+        messages: vi.fn().mockResolvedValue({
+          data: [
+            {
+              info: { role: "assistant" },
+              parts: [{ type: "text", text: "Implemented part one. Next I should run tests." }],
+            },
+          ],
+        }),
+        prompt,
+      },
+    };
+    const result = await RalphLoopPlugin({ directory, client });
+
+    await (result.tool as any)["ralph-loop"].execute({
+      task: "finish the implementation",
+      maxIterations: 5,
+    });
+    await result.event({
+      event: { type: "session.idle", properties: { sessionID: "ses_test" } },
+    });
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    const continuation = prompt.mock.calls[0][0].body.parts[0].text as string;
+    expect(continuation).toContain("直接使用工具执行当前最需要的下一步操作");
+    expect(continuation).toContain("<<<CODING_FEEDBACK>>>");
+    expect(continuation).toContain("👌");
+    expect(continuation).not.toContain("<promise>DONE</promise>");
+
+    const state = readFileSync(
+      join(directory, ".opencode", "ralph-loop.local.md"),
+      "utf-8",
+    );
+    expect(state).toContain("iteration: 1");
+    expect(state).toContain("sessionId: ses_test");
   });
 });

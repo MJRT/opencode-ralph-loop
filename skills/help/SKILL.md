@@ -10,7 +10,7 @@ The Ralph Loop plugin provides auto-continuation for complex tasks in opencode.
 ## Available Commands
 
 ### `/ralph-loop <task>`
-Start an iterative development loop that automatically continues until the task is complete.
+Start an iterative development loop that prevents premature idle during a coding turn.
 
 Example:
 ```
@@ -30,20 +30,27 @@ Example:
 ## How It Works
 
 1. **Start**: `/ralph-loop` creates a state file at `.opencode/ralph-loop.local.md`
-2. **Loop**: When the AI goes idle, the plugin checks if `<promise>DONE</promise>` was output
-3. **Continue**: If not found, it injects "Continue from where you left off"
-4. **Stop**: Loop continues until DONE is found or max iterations (100) reached
+2. **Loop**: When the AI goes idle, the plugin checks for `👌` or `<<<CODING_FEEDBACK>>>`
+3. **Continue**: If neither is found, it injects a work-first continuation prompt
+4. **Stop**: Loop continues until a terminal signal is found or max iterations (100) is reached
 5. **Cleanup**: State file is deleted when complete
 
-## Completion Signal
+## Terminal Signals
 
-When the task is fully complete, the AI outputs:
+When there is no important coding feedback:
 
 ```
-<promise>DONE</promise>
+👌
 ```
 
-This signals the loop to stop. The AI should ONLY output this when the task is truly complete.
+When important coding feedback exists:
+
+```
+<<<CODING_FEEDBACK>>>
+<necessary feedback>
+```
+
+Both are terminal for the loop. Ordinary unmarked prose is not.
 
 ## State File
 

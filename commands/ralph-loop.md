@@ -1,10 +1,10 @@
 ---
-description: Start Ralph Loop - auto-continues until task completion
+description: Start Ralph Loop - prevents premature idle during a coding turn
 ---
 
 # Ralph Loop
 
-Start an iterative development loop that automatically continues until the task is complete.
+Start an iterative development loop that prevents premature idle during a coding turn.
 
 ## Setup
 
@@ -26,15 +26,14 @@ EOF
 
 Now begin working on the task: **$ARGUMENTS**
 
-## Completion
+## Terminal response protocol
 
-When the task is FULLY completed, signal completion by outputting:
+Do not stop while you can still make progress yourself. A coding turn may end only with one of these workflow signals:
 
-```
-<promise>DONE</promise>
-```
+1. No important coding feedback: return `👌`.
+2. Important coding feedback exists: include `<<<CODING_FEEDBACK>>>`, then only the necessary feedback. Do not include `👌`.
 
-**IMPORTANT:** ONLY output this when the task is COMPLETELY and VERIFIABLY finished. Do NOT output false promises to escape the loop.
+Any response containing neither marker is treated as a premature idle and will be continued automatically.
 
 ## Cancellation
 

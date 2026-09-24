@@ -1,7 +1,7 @@
 {
   "name": "opencode-ralph-loop",
   "version": "1.0.10",
-  "description": "Minimal Ralph Loop plugin for opencode - auto-continues until task completion",
+  "description": "Minimal Ralph Loop plugin for opencode - prevents premature idle during coding turns",
   "main": "src/index.ts",
   "type": "module",
   "scripts": {
