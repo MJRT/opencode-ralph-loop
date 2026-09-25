@@ -42,8 +42,10 @@ Do not stop after a progress update, plan, partial implementation, or a problem 
 
 When the coding turn legitimately ends, use exactly one workflow signal:
 
-- No important coding feedback: return `👌`.
-- Important coding feedback exists: include `<<<CODING_FEEDBACK>>>`, then only the necessary feedback. Do not include `👌`.
+- Successful completion defaults to returning only `👌`.
+- Only when there is important context that cannot be reliably inferred from the final code/repository state and would materially affect downstream judgment, return `<<<CODING_FEEDBACK>>>` followed by only the necessary feedback. Do not include `👌`.
+
+Routine implementation summaries, completed fixes, passing tests/lint/typecheck, commit/worktree status, and other normal completion evidence are not coding feedback.
 
 Any response containing neither marker is considered a premature idle.
 

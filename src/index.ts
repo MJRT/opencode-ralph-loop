@@ -296,8 +296,10 @@ Located at: .opencode/ralph-loop.local.md`;
 只要仍可自行推进, 就继续 implementation、debugging、testing 和 verification, 不要因为阶段性进展而停止.
 
 本轮真正结束时只允许以下两类 terminal response:
-- 没有可能改变任务、任务状态或既有 context 的重要 coding feedback: response 包含 ${COMPLETION_MARKER}.
-- 存在需要交给 workflow 的重要 coding feedback: response 包含 ${FEEDBACK_MARKER}, marker 后只输出必要 feedback, 且不得包含 ${COMPLETION_MARKER}.
+- 成功完成时默认仅返回 ${COMPLETION_MARKER}.
+- 只有存在无法从最终 code/repository state 可靠推断, 且会实质影响 downstream 判断的重要上下文时, 才返回 ${FEEDBACK_MARKER}, marker 后只输出必要 feedback, 且不得包含 ${COMPLETION_MARKER}.
+
+Routine implementation summary, 已完成的修复, tests/lint/typecheck 通过, commit/worktree 状态和其他正常 completion evidence 都不属于 coding feedback.
 
 除此之外不要结束本轮.
 
