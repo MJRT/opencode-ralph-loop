@@ -54,8 +54,8 @@ The AI will work on your task and automatically continue until completion.
 ## How it works
 
 1. `/ralph-loop` creates a state file at `.opencode/ralph-loop.local.md`
-2. When the AI goes idle, the plugin checks the latest assistant response for `👌` or `<<<CODING_FEEDBACK>>>`
-3. If neither is found, it injects a work-first continuation prompt that tells the agent to resume execution instead of acknowledging
+2. Completed assistant text is checked for `👌` or `<<<CODING_FEEDBACK>>>` before OpenCode can publish idle
+3. If neither is found, the plugin appends a synthetic `noReply` continuation inside the same running session
 4. Loop continues until a terminal signal is found or max iterations (100) is reached
 5. State file is deleted when complete
 
@@ -74,7 +74,7 @@ Important coding feedback:
 <necessary feedback>
 ```
 
-Detection uses substring matching to tolerate minor model formatting drift. Any response containing neither marker is treated as a premature idle and continued.
+Detection uses substring matching to tolerate minor model formatting drift. An unmarked response is continued before OpenCode publishes idle, so external idle consumers only see the terminal completion.
 
 ## State File
 

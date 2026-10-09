@@ -30,7 +30,7 @@ Example:
 ## How It Works
 
 1. **Start**: `/ralph-loop` creates a state file at `.opencode/ralph-loop.local.md`
-2. **Loop**: When the AI goes idle, the plugin checks for `👌` or `<<<CODING_FEEDBACK>>>`
+2. **Loop**: Before an assistant response can become idle, the plugin checks for `👌` or `<<<CODING_FEEDBACK>>>`
 3. **Continue**: If neither is found, it injects a work-first continuation prompt
 4. **Stop**: Loop continues until a terminal signal is found or max iterations (100) is reached
 5. **Cleanup**: State file is deleted when complete

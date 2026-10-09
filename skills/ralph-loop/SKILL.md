@@ -11,8 +11,8 @@ Start an iterative development loop that prevents premature idle during a coding
 
 The Ralph Loop creates a continuous feedback cycle for completing complex tasks:
 
-1. You work on the task until you go idle
-2. The plugin detects the idle state and checks for completion
+1. You work on the task until a terminal response
+2. The plugin checks completed assistant text before OpenCode can publish idle
 3. If the response has no workflow terminal signal, it prompts you to resume actual work
 4. This repeats until you output a terminal signal or max iterations is reached
 

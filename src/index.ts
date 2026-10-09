@@ -9,15 +9,7 @@ import {
   hasTerminalSignal,
 } from "./completion.ts";
 import { RALPH_COMMANDS, STATE_FILENAME } from "./commands.ts";
-
-// Types
-export interface RalphState {
-  active: boolean;
-  iteration: number;
-  maxIterations: number;
-  sessionId?: string;
-  prompt?: string;
-}
+import { parseState, serializeState, type RalphState } from "./state.ts";
 
 const OPENCODE_CONFIG_DIR = join(homedir(), ".config/opencode");
 
@@ -65,44 +57,6 @@ function getStateFile(directory: string): string {
   return join(directory, ".opencode", STATE_FILENAME);
 }
 
-// Parse markdown frontmatter state. Regex accepts CRLF for cross-platform state files.
-export function parseState(content: string): RalphState {
-  const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (!match) return { active: false, iteration: 0, maxIterations: 100 };
-
-  const frontmatter = match[1];
-  const state: RalphState = { active: false, iteration: 0, maxIterations: 100 };
-
-  for (const line of frontmatter.split(/\r?\n/)) {
-    const [key, ...valueParts] = line.split(":");
-    const value = valueParts.join(":").trim();
-    if (key === "active") state.active = value === "true";
-    if (key === "iteration") state.iteration = parseInt(value) || 0;
-    if (key === "maxIterations") state.maxIterations = parseInt(value) || 100;
-    if (key === "sessionId") state.sessionId = value || undefined;
-  }
-
-  // Get prompt from body (after frontmatter)
-  const body = content.slice(match[0].length).trim();
-  if (body) state.prompt = body;
-
-  return state;
-}
-
-// Serialize state to markdown frontmatter
-export function serializeState(state: RalphState): string {
-  const lines = [
-    "---",
-    `active: ${state.active}`,
-    `iteration: ${state.iteration}`,
-    `maxIterations: ${state.maxIterations}`,
-  ];
-  if (state.sessionId) lines.push(`sessionId: ${state.sessionId}`);
-  lines.push("---");
-  if (state.prompt) lines.push("", state.prompt);
-  return lines.join("\n");
-}
-
 // Read state from project directory
 function readState(directory: string): RalphState {
   try {
@@ -129,6 +83,49 @@ function clearState(directory: string): void {
     const stateFile = getStateFile(directory);
     if (existsSync(stateFile)) unlinkSync(stateFile);
   } catch {}
+}
+
+function buildContinuationPrompt(state: RalphState, iteration: number): string {
+  return `[RALPH LOOP - ITERATION ${iteration}/${state.maxIterations}]
+
+当前 coding turn 尚未产生有效的 workflow 终止信号. 立即从当前 session state 继续执行剩余工作.
+
+不要回复确认信息、计划、进度说明, 也不要解释接下来准备做什么. 直接使用工具执行当前最需要的下一步操作.
+
+只要仍可自行推进, 就继续 implementation、debugging、testing 和 verification, 不要因为阶段性进展而停止.
+
+如果上一条 assistant response 已经包含 ${COMPLETION_MARKER} 或 ${FEEDBACK_MARKER}, 只重新返回该 terminal response, 不执行额外工作.
+
+本轮真正结束时只允许以下两类 terminal response:
+- 成功完成时默认仅返回 ${COMPLETION_MARKER}.
+- 只有存在无法从最终 code/repository state 可靠推断, 且会实质影响 downstream 判断的重要上下文时, 才返回 ${FEEDBACK_MARKER}, marker 后只输出必要 feedback, 且不得包含 ${COMPLETION_MARKER}.
+
+Routine implementation summary, 已完成的修复, tests/lint/typecheck 通过, commit/worktree 状态和其他正常 completion evidence 都不属于 coding feedback.
+
+除此之外不要结束本轮.
+
+Original task:
+${state.prompt || "(no task specified)"}`;
+}
+
+async function getAssistantContext(client: any, sessionId: string, messageId: string, directory: string) {
+  try {
+    const response = await client.session.message({
+      path: { id: sessionId, messageID: messageId },
+      query: { directory },
+    });
+    const info = (response as { data?: any }).data?.info;
+    if (info?.role !== "assistant") return {};
+    return {
+      agent: typeof info.mode === "string" ? info.mode : undefined,
+      model:
+        typeof info.providerID === "string" && typeof info.modelID === "string"
+          ? { providerID: info.providerID, modelID: info.modelID }
+          : undefined,
+    };
+  } catch {
+    return {};
+  }
 }
 
 // Check whether the latest assistant response intentionally ended the coding
@@ -171,6 +168,8 @@ async function hasTerminalResponse(client: any, sessionId: string, directory: st
 export default async function RalphLoopPlugin(ctx: any) {
   const directory = ctx.directory || process.cwd();
   const client = ctx.client;
+  const continuedMessageIds = new Set<string>();
+  const terminalMessageIds = new Set<string>();
 
   // Auto-setup skills on first run. Slash commands self-register via the
   // `config` hook below.
@@ -201,6 +200,8 @@ export default async function RalphLoopPlugin(ctx: any) {
           maxIterations: tool.schema.number().default(100).describe("Maximum iterations (default: 100)"),
         },
         async execute({ task, maxIterations = 100 }) {
+          continuedMessageIds.clear();
+          terminalMessageIds.clear();
           const state: RalphState = {
             active: true,
             iteration: 0,
@@ -233,6 +234,8 @@ Use /cancel-ralph to stop early.`;
           }
           const iterations = state.iteration;
           clearState(directory);
+          continuedMessageIds.clear();
+          terminalMessageIds.clear();
           return `Ralph Loop cancelled after ${iterations} iteration(s).`;
         }
       }),
@@ -251,8 +254,8 @@ Use /cancel-ralph to stop early.`;
 ## How It Works
 
 1. Start with: /ralph-loop "Build a REST API"
-2. AI works on the task until idle
-3. Plugin auto-continues if the response has no workflow terminal signal
+2. AI works on the task until a terminal response
+3. Plugin queues continuation before an unmarked response can become idle
 4. Loop stops when the response contains ${COMPLETION_MARKER} or ${FEEDBACK_MARKER}
 
 ## State File
@@ -262,7 +265,64 @@ Located at: .opencode/ralph-loop.local.md`;
       })
     },
 
-    // Event hook for auto-continuation
+    // Prevent premature idle inside OpenCode's own runner. text.complete is
+    // awaited before the V1 loop decides whether to stop, and noReply appends
+    // the continuation user message without starting a nested runner.
+    "experimental.text.complete": async (
+      input: { sessionID: string; messageID: string; partID: string },
+      output: { text: string },
+    ) => {
+      const state = readState(directory);
+      if (!state.active) return;
+      if (state.sessionId && state.sessionId !== input.sessionID) return;
+
+      if (hasTerminalSignal(output.text)) {
+        terminalMessageIds.add(input.messageID);
+        return;
+      }
+      if (terminalMessageIds.has(input.messageID)) return;
+      if (continuedMessageIds.has(input.messageID)) return;
+
+      if (state.iteration >= state.maxIterations) {
+        clearState(directory);
+        return;
+      }
+
+      const iteration = state.iteration + 1;
+      const continuationPrompt = buildContinuationPrompt(state, iteration);
+      const assistant = await getAssistantContext(
+        client,
+        input.sessionID,
+        input.messageID,
+        directory,
+      );
+
+      try {
+        await client.session.prompt({
+          path: { id: input.sessionID },
+          query: { directory },
+          body: {
+            noReply: true,
+            ...(assistant.agent ? { agent: assistant.agent } : {}),
+            ...(assistant.model ? { model: assistant.model } : {}),
+            // V1 keeps synthetic text model-visible while status integrations can
+            // ignore this internal prompt for external turn attribution.
+            parts: [{ type: "text", text: continuationPrompt, synthetic: true }],
+          },
+        });
+        continuedMessageIds.add(input.messageID);
+        writeState(directory, {
+          ...state,
+          iteration,
+          sessionId: input.sessionID,
+        });
+      } catch {
+        // A failed pre-idle admission is left visible as a normal completion.
+      }
+    },
+
+    // Idle no longer drives continuation: doing so races other idle consumers
+    // such as Orca. It only retires completed or otherwise ended loop state.
     event: async ({ event }: { event: { type: string; properties?: { sessionID?: string } } }) => {
       if (event.type === "session.idle") {
         const sessionId = event.properties?.sessionID;
@@ -274,52 +334,30 @@ Located at: .opencode/ralph-loop.local.md`;
 
         if (await hasTerminalResponse(client, sessionId, directory)) {
           clearState(directory);
+          continuedMessageIds.clear();
+          terminalMessageIds.clear();
           return;
         }
 
         if (state.iteration >= state.maxIterations) {
           clearState(directory);
+          continuedMessageIds.clear();
+          terminalMessageIds.clear();
           return;
         }
 
-        const newState = { ...state, iteration: state.iteration + 1, sessionId };
-        writeState(directory, newState);
-
-        // Treat an unmarked idle as premature. Resume actual work instead of
-        // acknowledging the continuation request.
-        const continuationPrompt = `[RALPH LOOP - ITERATION ${newState.iteration}/${newState.maxIterations}]
-
-当前 coding turn 尚未产生有效的 workflow 终止信号. 立即从当前 session state 继续执行剩余工作.
-
-不要回复确认信息、计划、进度说明, 也不要解释接下来准备做什么. 直接使用工具执行当前最需要的下一步操作.
-
-只要仍可自行推进, 就继续 implementation、debugging、testing 和 verification, 不要因为阶段性进展而停止.
-
-本轮真正结束时只允许以下两类 terminal response:
-- 成功完成时默认仅返回 ${COMPLETION_MARKER}.
-- 只有存在无法从最终 code/repository state 可靠推断, 且会实质影响 downstream 判断的重要上下文时, 才返回 ${FEEDBACK_MARKER}, marker 后只输出必要 feedback, 且不得包含 ${COMPLETION_MARKER}.
-
-Routine implementation summary, 已完成的修复, tests/lint/typecheck 通过, commit/worktree 状态和其他正常 completion evidence 都不属于 coding feedback.
-
-除此之外不要结束本轮.
-
-Original task:
-${state.prompt || "(no task specified)"}`;
-
-        try {
-          await client.session.prompt({
-            path: { id: sessionId },
-            body: {
-              parts: [{ type: "text", text: continuationPrompt }]
-            }
-          });
-        } catch {
-          // Silent fail - don't pollute TUI
-        }
+        // Reaching idle without a terminal signal means pre-idle admission did
+        // not keep the runner alive. Do not restart from idle and recreate the
+        // completion race this plugin is intended to prevent.
+        clearState(directory);
+        continuedMessageIds.clear();
+        terminalMessageIds.clear();
       }
 
       if (event.type === "session.deleted") {
         clearState(directory);
+        continuedMessageIds.clear();
+        terminalMessageIds.clear();
       }
     }
   };
