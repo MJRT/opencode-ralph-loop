@@ -85,6 +85,22 @@ function clearState(directory: string): void {
   } catch {}
 }
 
+const AUTO_MAX_ITERATIONS = 100;
+
+const AUTO_SYSTEM_PROMPT = `Ralph Loop is active for this OpenCode build session.
+
+Do not end the coding turn with a progress update, implementation summary, plan, or other ordinary prose while work can continue.
+
+When the coding turn legitimately ends, use exactly one terminal form:
+- Successful completion: return only ${COMPLETION_MARKER}.
+- Important context that cannot be reliably inferred from the final repository state and would materially affect downstream judgment: start with ${FEEDBACK_MARKER} and include only that necessary feedback. Do not include ${COMPLETION_MARKER}.
+
+Routine implementation summaries, completed fixes, passing tests/lint/typecheck, and commit/worktree status are not coding feedback.`;
+
+function hasOrdinaryUserContent(parts: any[]): boolean {
+  return parts.some((part) => part?.synthetic !== true && part?.ignored !== true);
+}
+
 function buildContinuationPrompt(state: RalphState, iteration: number): string {
   return `[RALPH LOOP - ITERATION ${iteration}/${state.maxIterations}]
 
@@ -104,8 +120,8 @@ Routine implementation summary, 已完成的修复, tests/lint/typecheck 通过,
 
 除此之外不要结束本轮.
 
-Original task:
-${state.prompt || "(no task specified)"}`;
+${state.prompt ? `Original task:
+${state.prompt}` : "Continue from the current session context."}`;
 }
 
 async function getAssistantContext(client: any, sessionId: string, messageId: string, directory: string) {
@@ -187,6 +203,43 @@ export default async function RalphLoopPlugin(ctx: any) {
       }
     },
 
+    // Build sessions are protected automatically. Synthetic continuation
+    // messages are internal Ralph traffic and must not reset loop state.
+    "chat.message": async (
+      input: { sessionID: string; agent?: string },
+      output: { parts: any[] },
+    ) => {
+      if (input.agent !== "build") return;
+      if (!hasOrdinaryUserContent(output.parts ?? [])) return;
+
+      const current = readState(directory);
+      if (current.active && current.sessionId === input.sessionID) return;
+      if (current.active && current.sessionId && current.sessionId !== input.sessionID) return;
+
+      continuedMessageIds.clear();
+      terminalMessageIds.clear();
+      writeState(directory, {
+        active: true,
+        iteration: 0,
+        maxIterations: AUTO_MAX_ITERATIONS,
+        sessionId: input.sessionID,
+      });
+    },
+
+    // Keep the terminal contract owned by the plugin rather than requiring
+    // callers or task prompts to mention Ralph.
+    "experimental.chat.system.transform": async (
+      input: { sessionID?: string },
+      output: { system: string[] },
+    ) => {
+      const state = readState(directory);
+      if (!state.active) return;
+      if (input.sessionID && state.sessionId && input.sessionID !== state.sessionId) return;
+      if (!output.system.includes(AUTO_SYSTEM_PROMPT)) {
+        output.system.push(AUTO_SYSTEM_PROMPT);
+      }
+    },
+
     // Register tools using the @opencode-ai/plugin SDK format.
     // The `args` field (Zod schema shape) is required — opencode calls
     // Object.entries(tool.args) internally. Using the old JSON Schema
@@ -202,11 +255,13 @@ export default async function RalphLoopPlugin(ctx: any) {
         async execute({ task, maxIterations = 100 }) {
           continuedMessageIds.clear();
           terminalMessageIds.clear();
+          const current = readState(directory);
           const state: RalphState = {
             active: true,
             iteration: 0,
             maxIterations,
-            prompt: task
+            sessionId: current.sessionId,
+            prompt: task,
           };
           writeState(directory, state);
 

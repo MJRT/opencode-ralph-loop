@@ -9,8 +9,11 @@ The Ralph Loop plugin provides auto-continuation for complex tasks in opencode.
 
 ## Available Commands
 
+### Automatic build-session loop
+OpenCode `build` sessions arm Ralph automatically on ordinary user messages. No Ralph-specific task prompt is required.
+
 ### `/ralph-loop <task>`
-Start an iterative development loop that prevents premature idle during a coding turn.
+Explicitly replace the tracked task or iteration loop when manual control is useful.
 
 Example:
 ```
@@ -29,11 +32,11 @@ Example:
 
 ## How It Works
 
-1. **Start**: `/ralph-loop` creates a state file at `.opencode/ralph-loop.local.md`
-2. **Loop**: Before an assistant response can become idle, the plugin checks for `👌` or `<<<CODING_FEEDBACK>>>`
-3. **Continue**: If neither is found, it injects a work-first continuation prompt
-4. **Stop**: Loop continues until a terminal signal is found or max iterations (100) is reached
-5. **Cleanup**: State file is deleted when complete
+1. **Start**: Ordinary `build` user messages create state at `.opencode/ralph-loop.local.md`
+2. **Protocol**: The plugin adds terminal instructions through OpenCode's system hook
+3. **Loop**: Before an assistant response can become idle, the plugin checks for `👌` or `<<<CODING_FEEDBACK>>>`
+4. **Continue**: If neither is found, it injects a synthetic work-first continuation
+5. **Cleanup**: State is deleted when a terminal signal is reached or the loop ends
 
 ## Terminal Signals
 

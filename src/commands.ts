@@ -74,21 +74,15 @@ Report the result to the user.`,
 
 ## Available Commands
 
-- \`/ralph-loop <task>\` - Start an auto-continuation loop for the given task
-- \`/cancel-ralph\` - Stop an active Ralph Loop
+- \`/ralph-loop <task>\` - Override the tracked task / iteration loop explicitly
+- \`/cancel-ralph\` - Stop the active Ralph Loop
 
-## Quick Start
-
-\`\`\`
-/ralph-loop Build a REST API with user authentication
-\`\`\`
-
-The AI will work on your task and automatically continue before an unmarked response can become idle.
+OpenCode \`build\` sessions arm Ralph automatically. Normal task prompts do not need to mention Ralph.
 
 ## How It Works
 
-1. Creates state file at \`${STATE_PATH}\`
-2. Works on the task until a terminal response
+1. Ordinary \`build\` user messages create state at \`${STATE_PATH}\`
+2. The plugin injects the terminal contract through OpenCode's system hook
 3. If neither \`👌\` nor \`<<<CODING_FEEDBACK>>>\` is found, queues continuation before idle
 4. Repeats until a terminal signal is found or max iterations (100) is reached
 

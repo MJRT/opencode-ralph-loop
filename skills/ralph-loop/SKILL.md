@@ -5,7 +5,7 @@ description: Start Ralph Loop - prevents premature idle during a coding turn
 
 # Ralph Loop
 
-Start an iterative development loop that prevents premature idle during a coding turn.
+OpenCode `build` sessions are protected automatically. Use this skill for explicit loop control when needed.
 
 ## How It Works
 
@@ -18,9 +18,9 @@ The Ralph Loop creates a continuous feedback cycle for completing complex tasks:
 
 Your previous work remains accessible through files and git history, enabling progressive refinement across iterations.
 
-## Starting the Loop
+## Explicit Loop Override
 
-When you invoke this skill, create the state file in the project directory:
+When you invoke this skill, replace the state file in the project directory:
 
 ```bash
 mkdir -p .opencode && cat > .opencode/ralph-loop.local.md << 'EOF'

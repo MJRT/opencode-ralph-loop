@@ -31,13 +31,13 @@ On first run, the plugin will automatically install skills and commands to your 
 
 ## Usage
 
-### Start a loop
+OpenCode `build` sessions are protected automatically. No Ralph-specific task prompt or tool call is required.
+
+Use `/ralph-loop <task>` only when you want to explicitly replace the tracked task or iteration limit.
 
 ```
 /ralph-loop "Build a REST API with authentication"
 ```
-
-The AI will work on your task and automatically continue until completion.
 
 ### Cancel a loop
 
@@ -53,11 +53,11 @@ The AI will work on your task and automatically continue until completion.
 
 ## How it works
 
-1. `/ralph-loop` creates a state file at `.opencode/ralph-loop.local.md`
-2. Completed assistant text is checked for `👌` or `<<<CODING_FEEDBACK>>>` before OpenCode can publish idle
-3. If neither is found, the plugin appends a synthetic `noReply` continuation inside the same running session
-4. Loop continues until a terminal signal is found or max iterations (100) is reached
-5. State file is deleted when complete
+1. An ordinary user message in an OpenCode `build` session automatically arms Ralph state at `.opencode/ralph-loop.local.md`
+2. The plugin adds the terminal contract through OpenCode's system hook; callers do not need to mention Ralph
+3. Completed assistant text is checked for `👌` or `<<<CODING_FEEDBACK>>>` before OpenCode can publish idle
+4. If neither is found, the plugin appends a synthetic `noReply` continuation inside the same running session
+5. Loop continues until a terminal signal is found or max iterations (100) is reached, then state is cleaned up
 
 ### Workflow terminal signals
 
@@ -101,7 +101,7 @@ Add `.opencode/ralph-loop.local.md` to your `.gitignore`.
 
 ## Features
 
-- **Plug-and-play**: Just add to config and restart - no manual setup
+- **Plug-and-play**: `build` sessions auto-arm after installation; no Ralph-specific task prompt required
 - **Auto-setup**: Skills and commands are automatically installed on first run
 - **Minimal**: ~300 lines, no bloat
 - **Project-relative**: State file in `.opencode/`, not global

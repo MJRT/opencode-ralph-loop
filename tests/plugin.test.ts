@@ -18,6 +18,8 @@ describe("RalphLoopPlugin", () => {
 
     expect(result.tool).toBeDefined();
     expect(typeof result.event).toBe("function");
+    expect(typeof result["chat.message"]).toBe("function");
+    expect(typeof result["experimental.chat.system.transform"]).toBe("function");
     expect(typeof result["experimental.text.complete"]).toBe("function");
   });
 
@@ -36,6 +38,145 @@ describe("RalphLoopPlugin", () => {
     expect(def.args, `tool "${name}" is missing args (would crash opencode 1.14+)`).toBeDefined();
     expect(() => Object.entries(def.args as object)).not.toThrow();
     expect(typeof def.execute).toBe("function");
+  });
+
+  it("auto-arms ordinary build messages without a Ralph command", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const result = await RalphLoopPlugin({ directory, client: {} });
+
+    await result["chat.message"](
+      { sessionID: "ses_auto", agent: "build" },
+      { parts: [{ type: "text", text: "implement the task" }] },
+    );
+
+    const contents = readFileSync(
+      join(directory, ".opencode", "ralph-loop.local.md"),
+      "utf-8",
+    );
+    expect(contents).toContain("active: true");
+    expect(contents).toContain("iteration: 0");
+    expect(contents).toContain("maxIterations: 100");
+    expect(contents).toContain("sessionId: ses_auto");
+    expect(contents).not.toContain("implement the task");
+  });
+
+  it("ignores synthetic continuations and non-build agents when auto-arming", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const result = await RalphLoopPlugin({ directory, client: {} });
+
+    await result["chat.message"](
+      { sessionID: "ses_synthetic", agent: "build" },
+      { parts: [{ type: "text", text: "continue", synthetic: true }] },
+    );
+    await result["chat.message"](
+      { sessionID: "ses_plan", agent: "plan" },
+      { parts: [{ type: "text", text: "plan this" }] },
+    );
+
+    expect(existsSync(join(directory, ".opencode", "ralph-loop.local.md"))).toBe(false);
+  });
+
+  it("does not reset an active auto loop for another ordinary message in the same session", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const message = vi.fn().mockResolvedValue({
+      data: { info: { role: "assistant", mode: "build" } },
+    });
+    const result = await RalphLoopPlugin({
+      directory,
+      client: { session: { message, prompt, messages: vi.fn() } },
+    });
+
+    await result["chat.message"](
+      { sessionID: "ses_auto", agent: "build" },
+      { parts: [{ type: "text", text: "first task" }] },
+    );
+    await result["experimental.text.complete"](
+      { sessionID: "ses_auto", messageID: "msg_one", partID: "part_one" },
+      { text: "still working" },
+    );
+    await result["chat.message"](
+      { sessionID: "ses_auto", agent: "build" },
+      { parts: [{ type: "text", text: "another user message" }] },
+    );
+
+    const contents = readFileSync(
+      join(directory, ".opencode", "ralph-loop.local.md"),
+      "utf-8",
+    );
+    expect(contents).toContain("iteration: 1");
+    expect(contents).not.toContain("first task");
+    expect(contents).not.toContain("another user message");
+  });
+
+  it("injects the terminal protocol only for the active session", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const result = await RalphLoopPlugin({ directory, client: {} });
+
+    await result["chat.message"](
+      { sessionID: "ses_auto", agent: "build" },
+      { parts: [{ type: "text", text: "implement" }] },
+    );
+
+    const active = { system: ["base system"] };
+    await result["experimental.chat.system.transform"](
+      { sessionID: "ses_auto" },
+      active,
+    );
+    expect(active.system).toHaveLength(2);
+    expect(active.system[1]).toContain("Ralph Loop is active");
+    expect(active.system[1]).toContain("👌");
+    expect(active.system[1]).toContain("<<<CODING_FEEDBACK>>>");
+
+    const withoutSessionId = { system: ["base system"] };
+    await result["experimental.chat.system.transform"]({}, withoutSessionId);
+    expect(withoutSessionId.system).toHaveLength(2);
+
+    const other = { system: ["base system"] };
+    await result["experimental.chat.system.transform"](
+      { sessionID: "ses_other" },
+      other,
+    );
+    expect(other.system).toEqual(["base system"]);
+  });
+
+  it("auto-armed build messages use the pre-idle continuation path", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "ralph-loop-plugin-"));
+    const prompt = vi.fn().mockResolvedValue(undefined);
+    const message = vi.fn().mockResolvedValue({
+      data: {
+        info: {
+          role: "assistant",
+          mode: "build",
+          providerID: "provider-test",
+          modelID: "model-test",
+        },
+      },
+    });
+    const result = await RalphLoopPlugin({
+      directory,
+      client: { session: { message, prompt, messages: vi.fn() } },
+    });
+
+    await result["chat.message"](
+      { sessionID: "ses_auto", agent: "build" },
+      { parts: [{ type: "text", text: "finish the implementation" }] },
+    );
+    await result["experimental.text.complete"](
+      { sessionID: "ses_auto", messageID: "msg_auto", partID: "part_auto" },
+      { text: "Implemented part one." },
+    );
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(prompt.mock.calls[0][0]).toMatchObject({
+      path: { id: "ses_auto" },
+      body: {
+        noReply: true,
+        agent: "build",
+        model: { providerID: "provider-test", modelID: "model-test" },
+        parts: [{ type: "text", synthetic: true }],
+      },
+    });
   });
 
   it("ralph-loop tool writes state when executed", async () => {
